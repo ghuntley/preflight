@@ -20,7 +20,7 @@
           version = "0.1.0";
           src = nixpkgs.lib.fileset.toSource {
             root = ./.;
-            fileset = nixpkgs.lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./src ./tests ./vendor ./rules ./benches ./LICENSE ];
+            fileset = nixpkgs.lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./src ./tests ./vendor ./rules ./benches ./examples ./LICENSE ];
           };
           cargoLock.lockFile = ./Cargo.lock;
           # Hegel's engine bootstrap needs network; mandatory in devenv CI.

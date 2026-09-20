@@ -154,11 +154,25 @@ preflight cache purge [--scope SCOPE_ID] [--socket PATH]
 | `GET /readyz` | none | readiness after startup toolchain checks |
 | `GET /metrics` | none | aggregate Prometheus counters and request-to-headers timings |
 
-Inference responses carry `x-preflight-request-id`. Completed inspections also attach `x-preflight-finding-count`. JSON logs correlate requests and safe finding IDs without recording prompts or matched secrets. Unknown routes are not pass-through routes.
+Every handled response carries `x-request-id`, including blocked requests, authentication failures, model discovery, and unmatched routes. Completed inspections also attach `x-preflight-finding-count`. JSON logs correlate requests and safe finding IDs without recording prompts or matched secrets. Unknown routes are not pass-through routes.
+
+### Correlation with underclass
+
+One request gets one ID across both proxies:
+
+```text
+client → preflight → underclass
+         generates   preserves
+         x-request-id: 9031b620-66aa-4a59-9228-bb7f40f567a1
+```
+
+Preflight creates a fresh UUIDv4 at ingress and sends it to underclass as `x-request-id`. Underclass validates and preserves it in its response, routing logs, retries, and request history. Both services use the log field `request_id`, so search that value in either service to follow the same request. Preflight replaces caller-supplied IDs; underclass generates its own when called directly with an absent, invalid, or duplicate ID.
+
+Both services use `x-request-id` exclusively. IDs are diagnostic metadata, not authentication or proof of inspection. See [ADR 0005](docs/adr/0005-cross-proxy-request-correlation.md).
 
 ## JSON logs
 
-Preflight prints one JSON object per log line. These representative excerpts omit tracing's `span` and `spans` metadata for readability; in the full output, inspection events carry the request ID and inspection-profile fingerprint in their request span. Timestamps, IDs, and timings below are illustrative.
+Preflight prints one JSON object per log line. These representative excerpts omit tracing's `span` and `spans` metadata for readability; in the full output, inspection events carry the request ID and inspection-profile fingerprint in their inspection span, nested under the request span. Timestamps, IDs, and timings below are illustrative.
 
 The headings identify the configured policy. The current log schema does **not** include a `mode` or `action` field, and HTTP 200 alone does not distinguish redaction from advisory forwarding. Successful-forwarding examples assume underclass returns 200.
 
@@ -365,20 +379,22 @@ Fixtures use synthetic credentials. The benchmark exercises benign 100 KiB and 1
 
 Agent conventions and Code Contracts guidance are in [`AGENTS.md`](AGENTS.md). Architecture decisions live in [`docs/adr/`](docs/adr).
 
+To verify correlation against both real binaries with temporary state and no provider accounts, build each repository's binaries, then run from the preflight checkout:
+
+```sh
+devenv shell -- cargo run --locked --example correlation_smoke -- \
+  ../underclass/target/debug/underclass ./target/debug/preflight
+```
+
+This checks shared IDs on model discovery and an underclass error, confirms preflight-blocked requests never reach underclass, and checks that malformed caller IDs and synthetic secrets do not enter either log.
+
 ### Weekly rule updates
 
 The [weekly workflow](.github/workflows/rules.yml) downloads the latest stable Gitleaks source archive, pins its commit and checksums, refreshes the database, runs validation and benchmarks, and rebuilds preflight. It also runs the NixOS VM test and uploads a Nix closure artifact with provenance.
 
-When the snapshot changes, the job opens or updates a PR from `automation/gitleaks-rules` into `main`, then enables squash auto-merge. Normal CI runs on that PR, and GitHub merges it once main's requirements pass. Only the database, upstream license, and provenance manifest are committed. The workflow still rebuilds every week when there is no update. Deployment remains an operator action.
+When the snapshot changes, the job commits the validated database, upstream license, and provenance manifest directly to `main` using GitHub Actions' built-in token. It checks that `main` has not moved during validation, pushes without rebasing or force, and explicitly starts CI for the updated branch. Update commits use `ghuntley@ghuntley.com`.
 
-Repository setup:
-
-1. Enable **Allow auto-merge** and **Allow squash merging** under Settings → General.
-2. Protect `main` with required status checks **`test`** and **`build`** from the CI workflow, and enable **Require branches to be up to date before merging**. Required human reviews will still need a human; this automation does not bypass or supply approvals.
-3. Create a fine-grained personal access token restricted to this repository with **Contents: read/write** and **Pull requests: read/write**. Store it as the Actions repository secret **`PREFLIGHT_UPDATE_TOKEN`**. Renew it before expiry.
-4. Once this workflow is on `main`, use Actions → **Weekly rules rebuild** → **Run workflow** to exercise the setup.
-
-The dedicated token allows PR and post-merge events to trigger CI. The built-in `GITHUB_TOKEN` generally suppresses those runs, so it is not used as a fallback. Its default repository permissions can remain read-only. The updater checks for its token and a protected main before starting. See [ADR 0003](docs/adr/0003-automatic-rules-update-merges.md).
+The workflow still validates and rebuilds every week when Gitleaks is already current, without creating an empty commit. It produces a compressed Nix closure artifact with provenance. See [ADR 0006](docs/adr/0006-direct-validated-rules-updates.md).
 
 Refresh a specific snapshot locally:
 

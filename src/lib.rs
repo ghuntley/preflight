@@ -1,5 +1,6 @@
 pub mod attachments;
 pub mod cache;
+pub mod correlation;
 pub mod document;
 pub mod metrics;
 pub mod resolver;

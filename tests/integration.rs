@@ -376,10 +376,25 @@ async fn proxy_preserves_clean_bytes_redacts_and_blocks_without_forwarding() {
             .body(clean.to_vec())
             .header("authorization", "Bearer fixture-credential")
             .header("session-id", "fixture-session")
+            .header("x-request-id", "untrusted-client-request-id")
+            .header("connection", "x-request-id")
             .send()
             .await
             .unwrap();
         assert!(response.status().is_success());
+        let request_id = response.headers()["x-request-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(!response.headers().contains_key("x-preflight-request-id"));
+        assert_eq!(
+            uuid::Uuid::parse_str(&request_id).unwrap().get_version(),
+            Some(uuid::Version::Random)
+        );
+        assert_eq!(
+            headers.lock().unwrap().last().unwrap()["x-request-id"],
+            request_id
+        );
         assert!(response.text().await.unwrap().ends_with("data: [DONE]\n\n"));
         assert_eq!(seen.lock().unwrap().last().unwrap(), clean);
         assert_eq!(
@@ -533,6 +548,8 @@ async fn proxy_preserves_clean_bytes_redacts_and_blocks_without_forwarding() {
         }
         child.kill().await.unwrap();
         let logs = std::fs::read_to_string(temp.path().join("log")).unwrap();
+        assert!(logs.contains(&request_id));
+        assert!(!logs.contains("untrusted-client-request-id"));
         assert!(!logs.contains(&token()));
         assert!(!logs.contains("fixture-credential"));
     }

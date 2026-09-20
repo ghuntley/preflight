@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use clap::{Parser, Subcommand, ValueEnum};
+use preflight::correlation::{self, RequestId};
 use preflight::{attachments::Attachments, cache::Cache, document, scanner::Scanner};
 use serde::Deserialize;
 use std::{
@@ -317,6 +318,7 @@ async fn run() -> Result<()> {
                 .route("/v1/models", get(models))
                 .route("/v1/responses", post(infer))
                 .route("/v1/chat/completions", post(infer))
+                .layer(axum::middleware::from_fn(correlation::middleware))
                 .with_state(live);
             axum::serve(listener, router)
                 .with_graceful_shutdown(async {
@@ -423,30 +425,32 @@ fn approve(
     Ok(ApprovedRequest { bytes })
 }
 async fn infer(State(live): State<Arc<Live>>, req: Request) -> Response {
+    let id = *req
+        .extensions()
+        .get::<RequestId>()
+        .expect("request identity middleware");
     let app = live.snapshot();
     let Ok(_permit) = app.admission.try_acquire() else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "inspection_capacity");
     };
-    let id = uuid::Uuid::new_v4().to_string();
     let start = std::time::Instant::now();
     let mut response = match tokio::time::timeout(
         std::time::Duration::from_secs(app.config.request_timeout_secs),
-        inspect_and_forward(&app, req)
-            .instrument(tracing::info_span!("request",request_id=%id,profile=%app.scanner.profile)),
+        inspect_and_forward(&app, req, id).instrument(
+            tracing::info_span!("inspection",request_id=%id,profile=%app.scanner.profile),
+        ),
     )
     .await
     {
         Ok(r) => r,
         Err(_) => error(StatusCode::REQUEST_TIMEOUT, "inspection_deadline"),
     };
-    response
-        .headers_mut()
-        .insert("x-preflight-request-id", id.parse().unwrap());
+    id.set_header(response.headers_mut());
     tracing::info!(event="request.policy_completed",request_id=%id,status=response.status().as_u16(),duration_ms=start.elapsed().as_millis() as u64);
     preflight::metrics::observe(start.elapsed(), response.status().as_u16());
     response
 }
-async fn inspect_and_forward(app: &App, req: Request) -> Response {
+async fn inspect_and_forward(app: &App, req: Request, id: RequestId) -> Response {
     if !authorized(app, req.headers()) {
         return error(StatusCode::UNAUTHORIZED, "authentication_failed");
     }
@@ -521,7 +525,7 @@ async fn inspect_and_forward(app: &App, req: Request) -> Response {
         .collect();
     let finding_count = inspection.rules.len();
     let mut response = match approve(&original, inspection, app.config.mode, &ids) {
-        Ok(approved) => forward(app, parts.uri.path(), parts.headers, Some(approved)).await,
+        Ok(approved) => forward(app, parts.uri.path(), parts.headers, Some(approved), id).await,
         Err(r) => *r,
     };
     response.headers_mut().insert(
@@ -531,11 +535,15 @@ async fn inspect_and_forward(app: &App, req: Request) -> Response {
     response
 }
 async fn models(State(live): State<Arc<Live>>, req: Request) -> Response {
+    let id = *req
+        .extensions()
+        .get::<RequestId>()
+        .expect("request identity middleware");
     let app = live.snapshot();
     if !authorized(&app, req.headers()) {
         return error(StatusCode::UNAUTHORIZED, "authentication_failed");
     }
-    forward(&app, "/v1/models", req.headers().clone(), None).await
+    forward(&app, "/v1/models", req.headers().clone(), None, id).await
 }
 fn strip_headers(headers: &mut HeaderMap) {
     let nominated: Vec<String> = headers
@@ -570,8 +578,12 @@ async fn forward(
     path: &str,
     mut headers: HeaderMap,
     body: Option<ApprovedRequest>,
+    id: RequestId,
 ) -> Response {
     strip_headers(&mut headers);
+    // Apply after hop-by-hop stripping: Connection must not remove our identity.
+    id.set_header(&mut headers);
+    headers.remove("x-preflight-request-id");
     headers.remove("accept-encoding");
     if let Some(key) = &app.upstream_key {
         match format!("Bearer {key}").parse() {

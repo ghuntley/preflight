@@ -18,4 +18,4 @@ devenv.local.yaml
 *.sqlite-shm
 *.sqlite-wal
 *.sock
-/preflight-closure.nar
+/preflight-closure.nar*

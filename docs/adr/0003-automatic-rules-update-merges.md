@@ -1,7 +1,7 @@
 # 0003 — Validated rules PRs with automatic merging
 
 ## Status
-Accepted
+Superseded by [0006](0006-direct-validated-rules-updates.md).
 
 ## Context
 The weekly job rebuilt preflight with fresh rules but left the repository's
