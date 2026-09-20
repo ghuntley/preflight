@@ -5,11 +5,24 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: gitleaks-rules-update
+  cancel-in-progress: false
 jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
+      - name: Require update credentials and protected main
+        env:
+          GH_TOKEN: ${{ secrets.PREFLIGHT_UPDATE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test -n "$GH_TOKEN"
+          test "$(gh api "repos/$GH_REPO/branches/main" --jq '.protected')" = true
       - uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
       - uses: cachix/install-nix-action@v31
       - uses: cachix/cachix-action@v16
         with:
@@ -19,7 +32,12 @@ jobs:
       - run: devenv test
       - run: devenv shell -- cargo bench --locked --bench inspection
       - run: nix build .#preflight
-      - run: nix-store --export $(nix-store -qR result) > preflight-closure.nar
+      - run: nix build .#checks.x86_64-linux.preflight-vm --out-link result-vm
+      - name: Export the package closure
+        run: |
+          nix-store --query --requisites result > "$RUNNER_TEMP/preflight-closure-paths"
+          mapfile -t closure_paths < "$RUNNER_TEMP/preflight-closure-paths"
+          nix-store --export "${closure_paths[@]}" > preflight-closure.nar
       - uses: actions/upload-artifact@v4
         with:
           name: preflight-weekly-provenance
@@ -28,3 +46,40 @@ jobs:
             vendor/gitleaks/
             Cargo.lock
             flake.lock
+      - name: Create or update the rules PR
+        id: update-pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.PREFLIGHT_UPDATE_TOKEN }}
+          base: main
+          branch: automation/gitleaks-rules
+          delete-branch: true
+          add-paths: |
+            vendor/gitleaks/gitleaks.toml
+            vendor/gitleaks/LICENSE
+            vendor/gitleaks/upstream.json
+          commit-message: Update embedded Gitleaks database
+          author: Geoffrey Huntley <ghuntley@ghuntley.com>
+          committer: Geoffrey Huntley <ghuntley@ghuntley.com>
+          title: Update embedded Gitleaks database
+          body: |
+            Automated refresh from the latest stable Gitleaks release.
+
+            This workflow passed devenv checks, Hegel and integration tests,
+            detection benchmarks, the package build, and the NixOS VM test
+            before opening or updating this PR. Normal CI also runs on the PR.
+
+            Only the vendored database, upstream license, and provenance
+            manifest are included. Auto-merge targets main and respects its
+            required checks and branch protection.
+      - name: Enable automatic merge into main
+        if: steps.update-pr.outputs.pull-request-number != '' && steps.update-pr.outputs.pull-request-operation != 'closed'
+        env:
+          GH_TOKEN: ${{ secrets.PREFLIGHT_UPDATE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.update-pr.outputs.pull-request-number }}
+          PR_HEAD_SHA: ${{ steps.update-pr.outputs.pull-request-head-sha }}
+        run: |
+          gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --auto --squash \
+            --match-head-commit "$PR_HEAD_SHA" \
+            --author-email ghuntley@ghuntley.com --delete-branch

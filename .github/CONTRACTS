@@ -1,0 +1,9 @@
+@cc [owner:ghuntley,label:automation] validated-rules-update
+The scheduled rules workflow MUST finish its validation and build gates before
+creating or updating an update PR. Its commits MUST be restricted to the vendored
+database, license, and provenance manifest.
+
+@cc [owner:ghuntley,label:automation] protected-auto-merge
+Automatic rules updates MUST target main through a pull request, use credentials
+that trigger normal CI, and request auto-merge for the returned PR head SHA.
+The workflow MUST NOT bypass branch protection or push directly to main.

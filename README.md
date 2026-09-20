@@ -156,6 +156,69 @@ preflight cache purge [--scope SCOPE_ID] [--socket PATH]
 
 Inference responses carry `x-preflight-request-id`. Completed inspections also attach `x-preflight-finding-count`. JSON logs correlate requests and safe finding IDs without recording prompts or matched secrets. Unknown routes are not pass-through routes.
 
+## JSON logs
+
+Preflight prints one JSON object per log line. These representative excerpts omit tracing's `span` and `spans` metadata for readability; in the full output, inspection events carry the request ID and inspection-profile fingerprint in their request span. Timestamps, IDs, and timings below are illustrative.
+
+The headings identify the configured policy. The current log schema does **not** include a `mode` or `action` field, and HTTP 200 alone does not distinguish redaction from advisory forwarding. Successful-forwarding examples assume underclass returns 200.
+
+### No secret found — any mode
+
+Inspection completes with zero findings, and the request continues normally:
+
+```jsonl
+{"timestamp":"2026-09-20T12:00:00.001Z","level":"INFO","fields":{"event":"inspection.completed","finding_count":0}}
+{"timestamp":"2026-09-20T12:00:00.024Z","level":"INFO","fields":{"event":"request.policy_completed","request_id":"9031b620-66aa-4a59-9228-bb7f40f567a1","status":200,"duration_ms":24}}
+```
+
+There is no `inspection.finding` event for this request. An allowlisted fixture also contributes no finding.
+
+### Secret found — `redact`
+
+A text finding produces a warning with its rule and opaque finding ID. Preflight replaces the detected span with a token such as `[REDACTED:github-pat]`, then forwards the sanitized request:
+
+```jsonl
+{"timestamp":"2026-09-20T12:01:00.002Z","level":"INFO","fields":{"event":"inspection.completed","finding_count":1}}
+{"timestamp":"2026-09-20T12:01:00.002Z","level":"WARN","fields":{"event":"inspection.finding","finding_id":"8a4f0571-4751-4d64-94da-55c3626a12de","rule_id":"github-pat"}}
+{"timestamp":"2026-09-20T12:01:00.031Z","level":"INFO","fields":{"event":"request.policy_completed","request_id":"aa7445a8-b378-4b93-8ed1-b25ae80dfc01","status":200,"duration_ms":31}}
+```
+
+For rebuilt attachments, an additional `attachment.inspected` event includes `finding_count` and `rebuilt: true`. A finding that cannot be safely rewritten is blocked instead.
+
+### Secret found — `no-go`
+
+The finding is reported, then preflight returns 409 without sending the request to underclass:
+
+```jsonl
+{"timestamp":"2026-09-20T12:02:00.002Z","level":"INFO","fields":{"event":"inspection.completed","finding_count":1}}
+{"timestamp":"2026-09-20T12:02:00.002Z","level":"WARN","fields":{"event":"inspection.finding","finding_id":"4b23f164-cc68-4852-b34d-1c6bd0ee13bd","rule_id":"github-pat"}}
+{"timestamp":"2026-09-20T12:02:00.003Z","level":"INFO","fields":{"event":"request.policy_completed","request_id":"9bf853df-9d39-4f05-a189-a857de29596a","status":409,"duration_ms":3}}
+```
+
+The client error contains the same finding ID, letting the operator locate the rule in logs. Neither the log nor the error contains the secret. The completion event stays at `INFO`; the finding itself is `WARN`.
+
+### Secret found — `advisory`
+
+The finding is reported, but the original request is forwarded unchanged:
+
+```jsonl
+{"timestamp":"2026-09-20T12:03:00.002Z","level":"INFO","fields":{"event":"inspection.completed","finding_count":1}}
+{"timestamp":"2026-09-20T12:03:00.002Z","level":"WARN","fields":{"event":"inspection.finding","finding_id":"c5aebff1-7b5a-4ad1-9ae7-2c351b96106f","rule_id":"github-pat"}}
+{"timestamp":"2026-09-20T12:03:00.028Z","level":"INFO","fields":{"event":"request.policy_completed","request_id":"ce36b020-0321-41e4-8d27-a9d81999a91e","status":200,"duration_ms":28}}
+```
+
+The model can receive the detected secret in this mode. Reporting remains secret-free.
+
+### Inspection could not finish
+
+A decoding or extraction failure is different from a clean scan. For example:
+
+```jsonl
+{"timestamp":"2026-09-20T12:04:00.015Z","level":"INFO","fields":{"event":"request.policy_completed","request_id":"2dc4f68c-adfd-4886-8965-708dabd14374","status":422,"duration_ms":15}}
+```
+
+There is no successful request-wide `inspection.completed` event in this case. All modes reject incomplete inspection. `request.policy_completed.duration_ms` measures time through the response headers; a forwarded response later emits `response.completed`, `response.stream_failed`, or `response.cancelled` for its stream outcome.
+
 ## Rules and carnet
 
 The Gitleaks database is embedded in the binary. The vendored snapshot includes its license and a release/commit/checksum manifest in [`vendor/gitleaks/`](vendor/gitleaks). [`rules/default-profile.toml`](rules/default-profile.toml) explicitly selects the enabled upstream rules, so new upstream additions do not silently expand enforcement.
@@ -304,7 +367,18 @@ Agent conventions and Code Contracts guidance are in [`AGENTS.md`](AGENTS.md). A
 
 ### Weekly rule updates
 
-The [weekly workflow](.github/workflows/rules.yml) downloads the latest stable Gitleaks source archive, pins its commit and checksums, refreshes the database, runs validation and benchmarks, and rebuilds preflight. Successful builds produce a Nix closure artifact with provenance; deployment remains an operator action.
+The [weekly workflow](.github/workflows/rules.yml) downloads the latest stable Gitleaks source archive, pins its commit and checksums, refreshes the database, runs validation and benchmarks, and rebuilds preflight. It also runs the NixOS VM test and uploads a Nix closure artifact with provenance.
+
+When the snapshot changes, the job opens or updates a PR from `automation/gitleaks-rules` into `main`, then enables squash auto-merge. Normal CI runs on that PR, and GitHub merges it once main's requirements pass. Only the database, upstream license, and provenance manifest are committed. The workflow still rebuilds every week when there is no update. Deployment remains an operator action.
+
+Repository setup:
+
+1. Enable **Allow auto-merge** and **Allow squash merging** under Settings → General.
+2. Protect `main` with required status checks **`test`** and **`build`** from the CI workflow, and enable **Require branches to be up to date before merging**. Required human reviews will still need a human; this automation does not bypass or supply approvals.
+3. Create a fine-grained personal access token restricted to this repository with **Contents: read/write** and **Pull requests: read/write**. Store it as the Actions repository secret **`PREFLIGHT_UPDATE_TOKEN`**. Renew it before expiry.
+4. Once this workflow is on `main`, use Actions → **Weekly rules rebuild** → **Run workflow** to exercise the setup.
+
+The dedicated token allows PR and post-merge events to trigger CI. The built-in `GITHUB_TOKEN` generally suppresses those runs, so it is not used as a fallback. Its default repository permissions can remain read-only. The updater checks for its token and a protected main before starting. See [ADR 0003](docs/adr/0003-automatic-rules-update-merges.md).
 
 Refresh a specific snapshot locally:
 
