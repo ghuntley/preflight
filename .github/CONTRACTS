@@ -7,3 +7,8 @@ database, license, and provenance manifest.
 Automatic rules updates MUST target main through a pull request, use credentials
 that trigger normal CI, and request auto-merge for the returned PR head SHA.
 The workflow MUST NOT bypass branch protection or push directly to main.
+
+@cc [owner:ghuntley,label:testing] hosted-worker-isolation
+Hosted integration tests MUST exercise the real Bubblewrap sandbox. Runner setup
+MAY permit the pinned Bubblewrap executable to create user namespaces, but MUST
+NOT disable host-wide AppArmor restrictions or skip sandboxed attachment tests.

@@ -16,6 +16,7 @@ jobs:
         with:
           name: devenv
       - run: nix profile add nixpkgs#devenv
+      - uses: ./.github/actions/setup-sandbox
       - run: devenv test
       - run: devenv shell -- cargo bench --locked --bench inspection
       - run: nix build .#checks.x86_64-linux.preflight-vm

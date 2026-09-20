@@ -1,0 +1,33 @@
+name: Prepare attachment sandbox
+description: Permit the pinned Nix Bubblewrap binary to create user namespaces on Ubuntu runners
+runs:
+  using: composite
+  steps:
+    - name: Configure and probe Bubblewrap
+      shell: bash
+      run: |
+        bwrap_path="$(devenv shell -- bash -euc 'readlink -f "$(type -P bwrap)"')"
+        true_path="$(devenv shell -- bash -euc 'type -P true')"
+        test -x "$bwrap_path"
+        test -x "$true_path"
+        [[ "$bwrap_path" == /nix/store/*/bin/bwrap ]]
+
+        restriction=0
+        if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+          read -r restriction < /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+        fi
+        if [[ "$restriction" == 1 ]]; then
+          # Ubuntu permits user namespaces through executable-specific profiles.
+          # Keep the host-wide restriction and all application sandboxing intact.
+          sudo tee /etc/apparmor.d/preflight-ci-bwrap > /dev/null <<EOF
+        abi <abi/4.0>,
+        include <tunables/global>
+        profile preflight-ci-bwrap "$bwrap_path" flags=(unconfined) {
+          userns,
+        }
+        EOF
+          sudo apparmor_parser --replace /etc/apparmor.d/preflight-ci-bwrap
+        fi
+
+        # Fail here with Bubblewrap's own diagnostics, before compiling tests.
+        "$bwrap_path" --unshare-all --ro-bind / / -- "$true_path"
