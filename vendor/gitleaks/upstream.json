@@ -1,0 +1,7 @@
+{
+  "tag": "v8.30.1",
+  "commit": "83d9cd684c87d95d656c1458ef04895a7f1cbd8e",
+  "database_sha256": "e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf",
+  "source_sha256": "6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115",
+  "source_url": "https://codeload.github.com/gitleaks/gitleaks/tar.gz/83d9cd684c87d95d656c1458ef04895a7f1cbd8e"
+}

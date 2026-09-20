@@ -1,0 +1,21 @@
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Rust and test artifacts
+/target/
+/.hegel/
+/result
+/result-*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sock
+/preflight-closure.nar

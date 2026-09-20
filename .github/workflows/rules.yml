@@ -1,0 +1,30 @@
+name: Weekly rules rebuild
+on:
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+      - run: nix profile add nixpkgs#devenv
+      - run: devenv shell -- cargo run --locked --bin preflight-update-rules
+      - run: devenv test
+      - run: devenv shell -- cargo bench --locked --bench inspection
+      - run: nix build .#preflight
+      - run: nix-store --export $(nix-store -qR result) > preflight-closure.nar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preflight-weekly-provenance
+          path: |
+            preflight-closure.nar
+            vendor/gitleaks/
+            Cargo.lock
+            flake.lock

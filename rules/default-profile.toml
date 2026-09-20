@@ -1,0 +1,9 @@
+# Explicit enablement: upstream additions do not silently expand enforcement.
+ids = [
+  "aws-access-token", "github-pat", "github-fine-grained-pat",
+  "openai-api-key", "anthropic-api-key", "anthropic-admin-api-key", "gcp-api-key",
+  "stripe-access-token", "private-key", "jwt",
+  "slack-app-token", "slack-bot-token", "slack-config-access-token",
+  "slack-config-refresh-token", "slack-legacy-bot-token", "slack-legacy-token",
+  "slack-legacy-workspace-token", "slack-user-token", "slack-webhook-url",
+]

@@ -1,0 +1,24 @@
+@cc [owner:ghuntley,label:security] complete-before-forward
+In enforcing modes, inference forwarding MUST wait for complete inspection of all
+discovered supported content. Unsupported attachments and incomplete inspection
+MUST cause rejection, not an uninspected pass-through.
+
+@cc [owner:ghuntley,label:security] diagnostics-no-content
+Runtime logs and Preflight-generated client errors MUST NOT contain request bodies, extracted text,
+matched secrets, authorization values, worker stderr, or original filenames.
+Opaque upstream response bodies are forwarded as part of API compatibility.
+
+@cc [owner:ghuntley,label:security] cache-not-authority
+Only complete inspection results MAY enter the approval cache. Cache failures
+MUST NOT authorize forwarding. Cache identity MUST include exact content bytes,
+security scope, and all behavior-affecting inspection configuration.
+
+@cc [owner:ghuntley,label:testing] pure-core-properties
+New pure scanner, document, cache-generation, and policy behavior MUST have Hegel
+properties in addition to exact regression fixtures where appropriate.
+
+@cc [owner:ghuntley,label:architecture] static-types-required
+All handwritten and generated programming-language source MUST use static types.
+Project-owned executables, workers, and update utilities MUST be Rust. Compiler
+and clippy checks MUST cover all Rust targets and test features. NixOS options
+MUST pass module evaluation and the NixOS test driver's type checks.
