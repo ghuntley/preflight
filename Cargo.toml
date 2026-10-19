@@ -16,7 +16,7 @@ clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-lopdf = "0.38"
+lopdf = "0.42"
 csv = "1"
 libc = "0.2"
 encoding_rs = "0.8"
